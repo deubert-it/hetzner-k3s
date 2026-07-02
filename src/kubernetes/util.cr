@@ -26,7 +26,17 @@ module Kubernetes::Util
 
   def apply_manifest_from_yaml(yaml : String, error_message = "Failed to apply manifest") : Util::Shell::CommandResult
     command = <<-BASH
-    kubectl apply -f  - <<-EOF
+    kubectl apply -f  - <<-'EOF'
+    #{yaml}
+    EOF
+    BASH
+
+    execute_kubectl_command(command, error_message)
+  end
+
+  def apply_manifest_server_side(yaml : String, error_message = "Failed to apply manifest") : Util::Shell::CommandResult
+    command = <<-BASH
+    kubectl apply --server-side --force-conflicts -f - <<-'EOF'
     #{yaml}
     EOF
     BASH
@@ -105,5 +115,10 @@ module Kubernetes::Util
       log_prefix: "Control plane",
       abort_on_error: abort_on_error,
       print_output: print_output)
+  end
+
+  def resolve_network_name : String
+    existing_name = settings.networking.private_network.existing_network_name
+    existing_name.blank? ? settings.cluster_name : existing_name
   end
 end

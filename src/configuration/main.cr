@@ -3,11 +3,7 @@ require "yaml"
 require "./models/master_node_pool"
 require "./models/worker_node_pool"
 require "./models/datastore"
-require "./models/manifests"
-require "./models/embedded_registry_mirror"
-require "./models/local_path_storage_class"
 require "./models/addons"
-require "./models/addons_config/cluster_autoscaler"
 
 class Configuration::Main
   include YAML::Serializable
@@ -16,6 +12,7 @@ class Configuration::Main
   getter cluster_name : String
   getter kubeconfig_path : String
   getter k3s_version : String
+  getter config_format_version : String?
   getter api_server_hostname : String?
   getter schedule_workloads_on_masters : Bool = false
   getter masters_pool : Configuration::Models::MasterNodePool
@@ -35,11 +32,7 @@ class Configuration::Main
   getter snapshot_os : String = "default"
   getter networking : Configuration::Models::Networking = Configuration::Models::Networking.new
   getter datastore : Configuration::Models::Datastore = Configuration::Models::Datastore.new
-  getter manifests : Configuration::Models::Manifests = Configuration::Models::Manifests.new
-  getter embedded_registry_mirror : Configuration::Models::EmbeddedRegistryMirror = Configuration::Models::EmbeddedRegistryMirror.new
-  getter local_path_storage_class : Configuration::Models::LocalPathStorageClass = Configuration::Models::LocalPathStorageClass.new
   getter addons : Configuration::Models::Addons = Configuration::Models::Addons.new
-  getter cluster_autoscaler : Configuration::Models::AddonsConfig::ClusterAutoscaler = Configuration::Models::AddonsConfig::ClusterAutoscaler.new
   getter include_instance_type_in_instance_name : Bool = false
   getter protect_against_deletion : Bool = true
   getter create_load_balancer_for_the_kubernetes_api : Bool = false
@@ -48,5 +41,31 @@ class Configuration::Main
 
   def all_kubelet_args
     ["cloud-provider=external", "resolv-conf=/etc/k8s-resolv.conf"] + kubelet_args
+  end
+
+  def external_robot_node_pools : Array(Configuration::Models::WorkerNodePool)
+    worker_node_pools.select do |pool|
+      next false unless pool.external?
+
+      external = pool.external
+      external && external.robot?
+    end
+  end
+
+  def external_robot_node_pools? : Bool
+    external_robot_node_pools.any?
+  end
+
+  def robot_credentials : NamedTuple(user: String, password: String)?
+    pool = external_robot_node_pools.first?
+    return nil unless pool
+
+    external = pool.external.not_nil!
+    {user: external.robot_user, password: external.robot_password}
+  end
+
+  def external_worker_hostname(pool : Configuration::Models::NodePool, index : Int32) : String
+    instance_type_part = include_instance_type_in_instance_name ? "#{pool.instance_type}-" : ""
+    "#{cluster_name}-#{instance_type_part}pool-#{pool.name}-worker#{index}"
   end
 end

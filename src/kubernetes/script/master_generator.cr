@@ -1,13 +1,14 @@
 require "crinja"
-require "base64"
 
 require "../../configuration/main"
 require "../../configuration/loader"
+require "../deployment_helper"
 require "../util"
 require "./labels_and_taints_generator"
 
 class Kubernetes::Script::MasterGenerator
   include Util
+  include Kubernetes::DeploymentHelper
 
   MASTER_INSTALL_SCRIPT = {{ read_file("#{__DIR__}/../../../templates/master_install_script.sh") }}
 
@@ -29,6 +30,7 @@ class Kubernetes::Script::MasterGenerator
     extra_args = "#{kube_api_server_args_list} #{kube_scheduler_args_list} #{kube_controller_manager_args_list} #{kube_cloud_controller_manager_args_list} #{kubelet_args_list} #{kube_proxy_args_list}"
     master_taint = @settings.schedule_workloads_on_masters ? " " : " --node-taint CriticalAddonsOnly=true:NoExecute "
     labels_and_taints = ::Kubernetes::Script::LabelsAndTaintsGenerator.labels_and_taints(@settings, @settings.masters_pool)
+    post_k3s_commands = format_post_k3s_commands(@settings.masters_pool.additional_post_k3s_commands || @settings.additional_post_k3s_commands)
 
     Crinja.render(MASTER_INSTALL_SCRIPT, {
       cluster_name:                     @settings.cluster_name,
@@ -46,18 +48,22 @@ class Kubernetes::Script::MasterGenerator
       cluster_cidr:                     @settings.networking.cluster_cidr,
       service_cidr:                     @settings.networking.service_cidr,
       cluster_dns:                      @settings.networking.cluster_dns,
+      cluster_domain:                   @settings.networking.cluster_domain || "",
       datastore_endpoint:               datastore_endpoint,
       etcd_arguments:                   etcd_arguments,
-      embedded_registry_mirror_enabled: @settings.embedded_registry_mirror.enabled.to_s,
-      local_path_storage_class_enabled: @settings.local_path_storage_class.enabled.to_s,
-      traefik_enabled: @settings.addons.traefik.enabled.to_s,
-      servicelb_enabled: @settings.addons.servicelb.enabled.to_s,
+      embedded_registry_mirror_enabled: @settings.addons.embedded_registry_mirror.enabled.to_s,
+      private_registry_config:          @settings.addons.embedded_registry_mirror.private_registry_config,
+      local_path_storage_class_enabled: @settings.addons.local_path_storage_class.enabled.to_s,
+      traefik_enabled:        @settings.addons.traefik.enabled.to_s,
+      servicelb_enabled:      @settings.addons.servicelb.enabled.to_s,
       metrics_server_enabled: @settings.addons.metrics_server.enabled.to_s,
-      labels_and_taints: labels_and_taints
+      labels_and_taints:      labels_and_taints,
+      additional_post_k3s_commands: post_k3s_commands,
+      kube_proxy_enabled:             @settings.networking.cni.kube_proxy?.to_s,
     })
   end
 
-  def kubelet_args_list
+  private def kubelet_args_list
     ::Kubernetes::Util.kubernetes_component_args_list("kubelet", @settings.all_kubelet_args)
   end
 
@@ -78,6 +84,7 @@ class Kubernetes::Script::MasterGenerator
   end
 
   private def kube_proxy_args_list
+    return "" unless @settings.networking.cni.kube_proxy?
     ::Kubernetes::Util.kubernetes_component_args_list("kube-proxy", @settings.kube_proxy_args)
   end
 
@@ -101,11 +108,13 @@ class Kubernetes::Script::MasterGenerator
     K3s.k3s_token(@settings, masters)
   end
 
-  private def api_server_ip_address(first_master : Hetzner::Instance)
-    first_master.private_ip_address || first_master.public_ip_address
+  private def default_log_prefix
+    "Kubernetes Script Master"
   end
 
-  def default_log_prefix
-    "Kubernetes Script Master"
+  private def format_post_k3s_commands(commands : Array(String)) : String
+    return "" if commands.empty?
+
+    commands.join("\n")
   end
 end

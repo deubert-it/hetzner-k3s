@@ -1,3 +1,4 @@
+#!/bin/bash
 touch /etc/initialized
 
 HOSTNAME=$(hostname -f)
@@ -13,11 +14,15 @@ if [ "{{ private_network_enabled }}" = "true" ]; then
   DELAY=10
 
   for i in $(seq 1 $MAX_ATTEMPTS); do
-    # Simplified network interface detection
+    # Simplified network interface detection.
+    # NOTE: MTU 1280 matches WireGuard's default — mesh agents like NetBird,
+    # Tailscale, or raw wg-quick create interfaces (wt0, wg0, tailscale0,
+    # netbird0, ...) that would otherwise be picked here over the real
+    # Hetzner private vlan (enp7s0, MTU 1450). Exclude them by name.
     NETWORK_INTERFACE=$(
       ip -o link show |
         awk -F': ' '/mtu (1450|1280)/ {print $2}' |
-        grep -Ev 'cilium|br|flannel|docker|veth' |
+        grep -Ev 'cilium|lxc|br|flannel|docker|veth|wt|wg|tailscale|netbird' |
         head -n1
     )
 
@@ -99,13 +104,19 @@ else
   METRICS_SERVER_PLUGIN="--disable metrics-server"
 fi
 
+# Kube-proxy arguments
+if [ "{{ kube_proxy_enabled }}" = "true" ]; then
+  KUBE_PROXY_ARG='--kube-proxy-arg=metrics-bind-address=0.0.0.0'
+else
+  KUBE_PROXY_ARG=""
+fi
+
 # Create k3s directories
 mkdir -p /etc/rancher/k3s
 
 # Create registries.yaml
-cat >/etc/rancher/k3s/registries.yaml <<EOF
-mirrors:
-  "*":
+cat >/etc/rancher/k3s/registries.yaml <<\EOF
+{{ private_registry_config | trim }}
 EOF
 
 # Get instance ID for public network
@@ -117,6 +128,13 @@ if [ "{{ private_network_enabled }}" = "false" ]; then
   else
     echo "WARNING: Could not retrieve instance ID" 2>&1 | tee -a /var/log/hetzner-k3s.log
   fi
+fi
+
+# Cluster domain override (cluster.local default)
+if [ -n "{{ cluster_domain }}" ]; then
+  CLUSTER_DOMAIN="--cluster-domain={{ cluster_domain }}"
+else
+  CLUSTER_DOMAIN=""
 fi
 
 # Install k3s
@@ -138,8 +156,9 @@ curl -sfL https://get.k3s.io | \
     --cluster-cidr={{ cluster_cidr }} \
     --service-cidr={{ service_cidr }} \
     --cluster-dns={{ cluster_dns }} \
+    $CLUSTER_DOMAIN \
     --kube-controller-manager-arg="bind-address=0.0.0.0" \
-    --kube-proxy-arg="metrics-bind-address=0.0.0.0" \
+    $KUBE_PROXY_ARG \
     --kube-scheduler-arg="bind-address=0.0.0.0" \
     {{ master_taint }} {{ labels_and_taints }} {{ extra_args }} {{ etcd_arguments }} \
     $KUBELET_INSTANCE_ID \
@@ -158,4 +177,10 @@ if [ ${PIPESTATUS[0]} -ne 0 ]; then
 fi
 
 echo "k3s installation completed successfully" 2>&1 | tee -a /var/log/hetzner-k3s.log
+
+{% if additional_post_k3s_commands != "" %}
+# Additional post-k3s commands
+{{ additional_post_k3s_commands }}
+{% endif %}
+
 echo true >/etc/initialized

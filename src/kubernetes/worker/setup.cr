@@ -2,15 +2,25 @@ require "../../configuration/loader"
 require "../../configuration/main"
 require "../../hetzner/instance"
 require "../../util/ssh"
+require "../deployment_helper"
+require "../local_firewall/setup"
 require "../script/worker_generator"
 
 class Kubernetes::Worker::Setup
+  include Kubernetes::SSHDeploymentHelper
+
+  getter settings : Configuration::Main
+  getter ssh : ::Util::SSH
+
+  private getter local_firewall_setup : Kubernetes::LocalFirewall::Setup
+
   def initialize(
     @configuration : Configuration::Loader,
     @settings : Configuration::Main,
     @ssh : ::Util::SSH,
     @worker_generator : Kubernetes::Script::WorkerGenerator
   )
+    @local_firewall_setup = Kubernetes::LocalFirewall::Setup.new(settings, ssh)
   end
 
   def set_up_workers(workers_installation_queue_channel, worker_count, masters, first_master)
@@ -40,37 +50,34 @@ class Kubernetes::Worker::Setup
 
     worker_count.times { workers_ready_channel.receive }
 
-    wait_for_one_worker_to_be_ready(first_master_instance)
+    wait_for_one_worker_to_be_ready(first_master_instance, workers.map(&.name))
 
     workers
   end
 
   private def deploy_to_worker(instance : Hetzner::Instance, pool, masters, first_master)
     wait_for_cloud_init(instance)
+    local_firewall_setup.deploy(instance)
     script = @worker_generator.generate_script(masters, first_master, pool)
     deploy_to_instance(instance, script)
   end
 
-  private def wait_for_cloud_init(instance : Hetzner::Instance)
-    cloud_init_wait_script = {{ read_file("#{__DIR__}/../../../templates/cloud_init_wait_script.sh") }}
-    @ssh.run(instance, @settings.networking.ssh.port, cloud_init_wait_script, @settings.networking.ssh.use_agent)
-  end
+  private def wait_for_one_worker_to_be_ready(first_master : Hetzner::Instance, worker_names : Array(String))
+    return if worker_names.empty?
 
-  private def deploy_to_instance(instance : Hetzner::Instance, script : String) : String
-    @ssh.run(instance, @settings.networking.ssh.port, script, @settings.networking.ssh.use_agent)
-  end
-
-  private def wait_for_one_worker_to_be_ready(first_master : Hetzner::Instance)
     log_line "Waiting for at least one worker node to be ready...", log_prefix: "Cluster Autoscaler"
 
     timeout = Time.monotonic + 5.minutes
 
     loop do
-      output = @ssh.run(first_master, @settings.networking.ssh.port, "KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl get nodes", @settings.networking.ssh.use_agent, print_output: false)
+      output = @ssh.run(first_master, @settings.networking.ssh.port, "KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl get nodes -o='custom-columns=NAME:.metadata.name,STATUS:.status.conditions[?(@.type==\"Ready\")].status' --no-headers 2>/dev/null", @settings.networking.ssh.use_agent, print_output: false)
 
-      ready_workers = output.lines.count { |line| line.includes?("worker") && line.includes?("Ready") }
+      ready = output.lines.any? do |line|
+        name = line.split.first?
+        name && worker_names.includes?(name) && line.includes?("True")
+      end
 
-      break if ready_workers > 0
+      break if ready
 
       if Time.monotonic > timeout
         log_line "Timeout waiting for worker nodes, aborting", log_prefix: "Cluster Autoscaler"
@@ -89,4 +96,3 @@ class Kubernetes::Worker::Setup
     puts "[#{log_prefix}] #{message}"
   end
 end
-

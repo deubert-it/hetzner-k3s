@@ -27,7 +27,6 @@
 				"GitHub.vscode-pull-request-github",
 				"codezombiech.gitignore",
 				"eamodio.gitlens",
-				"ZainChen.json",
 				"ziyasal.vscode-open-in-github",
 				"christian-kohler.path-intellisense",
 				"wayou.vscode-todo-highlight",
@@ -62,7 +61,7 @@
 
 				"terminal.integrated.defaultProfile.linux": "zsh",
 				"terminal.integrated.shell.linux": "/bin/zsh",
-				"terminal.integrated.cwd": "/home/app/backend",
+				"terminal.integrated.cwd": "/home/app/hetzner-k3s",
 				"terminal.integrated.allowChords": false,
 				"terminal.explorerKind": "integrated",
 				"terminal.integrated.shellIntegration.enabled": true,

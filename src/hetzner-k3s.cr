@@ -10,16 +10,25 @@ require "./cluster/run"
 
 module Hetzner::K3s
   class CLI < Admiral::Command
-    VERSION = "2.4.2"
+    VERSION = "2.6.0"
+    CONFIG_FORMAT_VERSION = "1"
 
     def self.print_banner
-      puts " _          _                            _    _____     ".colorize(:green)
-      puts "| |__   ___| |_ _____ __   ___ _ __     | | _|___ / ___ ".colorize(:green)
-      puts "| '_ \\ / _ \\ __|_  / '_ \\ / _ \\ '__|____| |/ / |_ \\/ __|".colorize(:green)
-      puts "| | | |  __/ |_ / /| | | |  __/ | |_____|   < ___) \\__ \\".colorize(:green)
-      puts "|_| |_|\\___|\\__/___|_| |_|\\___|_|       |_|\\_\\____/|___/".colorize(:green)
+      puts "╭─────────────────────────────────────────╮".colorize(:green)
+      puts "│            hetzner-k3s                  │".colorize(:green)
+      puts "│   Production-ready K8s on Hetzner       │".colorize(:green)
+      puts "╰─────────────────────────────────────────╯".colorize(:green)
       puts
       puts "Version: #{Hetzner::K3s::CLI::VERSION}".colorize(:blue)
+      puts
+    end
+
+    def self.print_sponsor_message
+      puts
+      puts "───────────────────────────────────────────────────────".colorize(:blue)
+      puts "  ❤️  Enjoying hetzner-k3s? Support its development:".colorize(:blue)
+      puts "  https://github.com/sponsors/vitobotta".colorize(:blue)
+      puts "───────────────────────────────────────────────────────".colorize(:blue)
       puts
     end
 
@@ -32,9 +41,29 @@ module Hetzner::K3s
         short: "c",
         required: true
 
+      define_flag quiet : Bool,
+        description: "Suppress the sponsor message",
+        long: "quiet",
+        short: "q",
+        required: false,
+        default: false
+
+      define_flag skip_current_ip_validation : Bool,
+        description: "Skip validation that your current IP is included in allowed SSH/API networks",
+        long: "skip-current-ip-validation",
+        required: false,
+        default: false
+
       def run
-        configuration = ::Hetzner::K3s::CLI.load_configuration(flags.configuration_file_path, nil, true, :create)
+        configuration = ::Hetzner::K3s::CLI.load_configuration(
+          flags.configuration_file_path,
+          nil,
+          true,
+          :create,
+          skip_current_ip_validation: flags.skip_current_ip_validation
+        )
         Cluster::Create.new(configuration: configuration).run
+        ::Hetzner::K3s::CLI.print_sponsor_message unless flags.quiet
       end
     end
 
@@ -53,9 +82,17 @@ module Hetzner::K3s
         required: false,
         default: false
 
+      define_flag quiet : Bool,
+        description: "Suppress the sponsor message",
+        long: "quiet",
+        short: "q",
+        required: false,
+        default: false
+
       def run
         configuration = ::Hetzner::K3s::CLI.load_configuration(flags.configuration_file_path, nil, flags.force, :delete)
         Cluster::Delete.new(configuration: configuration, force: flags.force).run
+        ::Hetzner::K3s::CLI.print_sponsor_message unless flags.quiet
       end
     end
 
@@ -79,9 +116,17 @@ module Hetzner::K3s
         required: false,
         default: false
 
+      define_flag quiet : Bool,
+        description: "Suppress the sponsor message",
+        long: "quiet",
+        short: "q",
+        required: false,
+        default: false
+
       def run
         configuration = ::Hetzner::K3s::CLI.load_configuration(flags.configuration_file_path, flags.new_k3s_version, flags.force, :upgrade)
         Cluster::Upgrade.new(configuration: configuration).run
+        ::Hetzner::K3s::CLI.print_sponsor_message unless flags.quiet
       end
     end
 
@@ -176,9 +221,9 @@ module Hetzner::K3s
       puts help
     end
 
-    def self.load_configuration(file_path, new_k3s_version = nil, force = true, action = nil)
+    def self.load_configuration(file_path, new_k3s_version = nil, force = true, action = nil, skip_current_ip_validation = false)
       ::Hetzner::K3s::CLI.print_banner
-      configuration = Configuration::Loader.new(file_path, new_k3s_version, force)
+      configuration = Configuration::Loader.new(file_path, new_k3s_version, force, skip_current_ip_validation)
       configuration.validate(action) if action
       configuration
     end

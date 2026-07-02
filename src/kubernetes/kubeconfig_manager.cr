@@ -1,11 +1,14 @@
-require "file_utils"
-require "../util"
-require "../util/ssh"
-require "../hetzner/instance"
 require "../configuration/loader"
+require "../hetzner/load_balancer"
+require "../util"
+require "../util/shell"
+require "../util/ssh"
+require "./deployment_helper"
 
 class Kubernetes::KubeconfigManager
   include Util
+  include Util::Shell
+  include Kubernetes::DeploymentHelper
 
   def initialize(@configuration : Configuration::Loader, @settings : Configuration::Main, @ssh : ::Util::SSH)
   end
@@ -32,7 +35,11 @@ class Kubernetes::KubeconfigManager
     end
 
     masters.each_with_index do |master, index|
-      master_ip_address = @settings.networking.public_network.ipv4 ? master.public_ip_address : master.private_ip_address
+      master_ip_address = if @settings.networking.ssh.use_private_ip
+        master.private_ip_address
+      else
+        @settings.networking.public_network.ipv4 ? master.public_ip_address : master.private_ip_address
+      end
       master_kubeconfig_path = "#{kubeconfig_path}-#{master.name}"
       master_kubeconfig = kubeconfig
         .gsub("server: https://127.0.0.1:6443", "server: https://#{master_ip_address}:6443")
@@ -74,12 +81,10 @@ class Kubernetes::KubeconfigManager
     sans.uniq.sort.join(" ")
   end
 
-  private def api_server_ip_address(first_master : Hetzner::Instance)
-    first_master.private_ip_address || first_master.public_ip_address
-  end
-
   private def load_balancer_ip_address(load_balancer : Hetzner::LoadBalancer?)
-    load_balancer.try(&.public_ip_address)
+    return nil unless load_balancer
+
+    @settings.networking.ssh.use_private_ip ? load_balancer.private_ip_address : load_balancer.public_ip_address
   end
 
   private def switch_to_context(context_name : String, kubeconfig_path : String)

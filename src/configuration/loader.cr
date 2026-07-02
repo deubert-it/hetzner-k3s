@@ -1,11 +1,7 @@
 require "yaml"
-require "crest"
 
 require "./main"
-
 require "../hetzner/client"
-require "../hetzner/instance_type"
-require "../hetzner/location"
 
 require "./validators/configuration_file_path"
 require "./validators/cluster_name"
@@ -42,7 +38,6 @@ require "../util"
 class Configuration::Loader
   include Util
 
-  getter hetzner_client : Hetzner::Client?
   getter errors : Array(String) = [] of String
   getter settings : Configuration::Main
 
@@ -73,12 +68,11 @@ class Configuration::Loader
 
   getter new_k3s_version : String?
   getter configuration_file_path : String
+  getter skip_current_ip_validation : Bool = false
 
-  private property instance_types_loaded : Bool = false
-  private property locations_loaded : Bool = false
   private property force : Bool = false
 
-  def initialize(@configuration_file_path, @new_k3s_version, @force)
+  def initialize(@configuration_file_path, @new_k3s_version, @force, @skip_current_ip_validation = false)
     @settings = Configuration::Main.from_yaml(File.read(configuration_file_path))
 
     Configuration::Validators::ConfigurationFilePath.new(errors, configuration_file_path).validate
@@ -88,11 +82,9 @@ class Configuration::Loader
 
   def validate(command)
     log_line "Validating configuration..."
-
+    check_config_format_version
     Configuration::Validators::ClusterName.new(errors, settings.cluster_name).validate
-
     validate_command_specific_settings(command)
-
     print_validation_result
   end
 
@@ -105,7 +97,8 @@ class Configuration::Loader
       masters_pool: masters_pool,
       instance_types: instance_types,
       all_locations: all_locations,
-      new_k3s_version: new_k3s_version
+      new_k3s_version: new_k3s_version,
+      skip_current_ip_validation: skip_current_ip_validation
     ).validate(command)
   end
 
@@ -130,5 +123,16 @@ class Configuration::Loader
 
   private def default_log_prefix
     "Configuration"
+  end
+
+  private def check_config_format_version
+    file_version = settings.config_format_version
+
+    if file_version != Hetzner::K3s::CLI::CONFIG_FORMAT_VERSION
+      STDERR.puts "[Configuration] The configuration file does not have the expected config_format_version #{Hetzner::K3s::CLI::CONFIG_FORMAT_VERSION} (found: #{file_version.nil? ? "missing" : file_version})."
+      STDERR.puts "[Configuration] Please ensure the configuration file format is correct for the version of hetzner-k3s you are using."
+      STDERR.puts "[Configuration] If the format is already correct, set config_format_version to #{Hetzner::K3s::CLI::CONFIG_FORMAT_VERSION} in the configuration file and try again."
+      exit 1
+    end
   end
 end

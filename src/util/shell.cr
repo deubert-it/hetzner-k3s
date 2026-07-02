@@ -1,6 +1,5 @@
+require "./prefixed_io"
 require "./shell/command_result"
-require "random/secure"
-require "file_utils"
 
 module Util
   module Shell
@@ -57,7 +56,7 @@ module Util
         end
 
         output = status.success? ? stdout.to_s : stderr.to_s
-        result = CommandResult.new(output, status.exit_status)
+        result = CommandResult.new(output, status.exit_code)
 
         unless result.success?
           error_msg = error_message.blank? ? "" : error_message

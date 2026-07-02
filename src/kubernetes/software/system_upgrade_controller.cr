@@ -9,8 +9,8 @@ class Kubernetes::Software::SystemUpgradeController
   include Util
   include Kubernetes::Util
 
-  getter configuration : Configuration::Loader
-  getter settings : Configuration::Main { configuration.settings }
+  private getter configuration : Configuration::Loader
+  private getter settings : Configuration::Main { configuration.settings }
 
   def initialize(@configuration : Configuration::Loader, @settings : Configuration::Main)
   end
@@ -31,7 +31,7 @@ class Kubernetes::Software::SystemUpgradeController
   end
 
   private def create_crd : Nil
-    crd_url = settings.manifests.system_upgrade_controller_crd_manifest_url
+    crd_url = settings.addons.system_upgrade_controller.crd_manifest_url
     apply_manifest_from_url(crd_url, "Failed to apply System Upgrade Controller CRD")
   end
 
@@ -42,7 +42,7 @@ class Kubernetes::Software::SystemUpgradeController
   end
 
   private def fetch_deployment_manifest : String
-    deployment_url = settings.manifests.system_upgrade_controller_deployment_manifest_url
+    deployment_url = settings.addons.system_upgrade_controller.deployment_manifest_url
     fetch_manifest(deployment_url)
   end
 
@@ -54,11 +54,7 @@ class Kubernetes::Software::SystemUpgradeController
 
   private def deployment_with_added_toleration(resource : YAML::Any) : Kubernetes::Resources::Deployment
     deployment = Kubernetes::Resources::Deployment.from_yaml(resource.to_yaml)
-    deployment.spec.template.spec.add_toleration(
-      key: "CriticalAddonsOnly",
-      value: "true",
-      effect: "NoExecute"
-    )
+    deployment.spec.template.spec.add_critical_addons_only_toleration
     deployment
   end
 

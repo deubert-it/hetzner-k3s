@@ -1,20 +1,26 @@
-require "../configuration/main"
 require "../configuration/loader"
-require "../hetzner/client"
 require "../hetzner/ssh_key/create"
-require "../util/ssh"
 require "../kubernetes/installer"
-require "./instance_builder"
-require "./network_manager"
-require "./load_balancer_manager"
+require "../util/ssh"
+require "./external_node_validator"
 require "./firewall_manager"
+require "./instance_builder"
+require "./load_balancer_manager"
+require "./network_manager"
+require "./placement_group_manager"
 
 class Cluster::Create
   private getter configuration : Configuration::Loader
   private getter hetzner_client : Hetzner::Client { configuration.hetzner_client }
   private getter settings : Configuration::Main { configuration.settings }
   private getter autoscaling_worker_node_pools : Array(Configuration::Models::WorkerNodePool) { settings.worker_node_pools.select(&.autoscaling_enabled) }
-  private getter ssh_client : Util::SSH { Util::SSH.new(settings.networking.ssh.private_key_path, settings.networking.ssh.public_key_path) }
+  private getter ssh_client : Util::SSH do
+    Util::SSH.new(
+      settings.networking.ssh.private_key_path,
+      settings.networking.ssh.public_key_path,
+      settings.networking.ssh.use_private_ip
+    )
+  end
   private getter network : Hetzner::Network?
   private getter ssh_key : Hetzner::SSHKey
   private getter load_balancer : Hetzner::LoadBalancer?
@@ -28,25 +34,31 @@ class Cluster::Create
   private property kubernetes_workers_installation_queue_channel do
     Channel(Hetzner::Instance).new(10)
   end
-  private property completed_channel : Channel(Nil) = Channel(Nil).new
+  private property completed_channel : Channel(Exception?) = Channel(Exception?).new
   private property mutex : Mutex = Mutex.new
 
   private getter instance_builder : InstanceBuilder
   private getter network_manager : NetworkManager
   private getter load_balancer_manager : LoadBalancerManager
   private getter firewall_manager : FirewallManager
+  private getter placement_group_manager : PlacementGroupManager
+  private getter placement_groups : PlacementGroupManager::PlacementGroups
 
   def initialize(@configuration)
+    validate_external_nodes
+
     @network_manager = NetworkManager.new(settings, hetzner_client)
     @load_balancer_manager = LoadBalancerManager.new(settings, hetzner_client)
     @firewall_manager = FirewallManager.new(settings, hetzner_client)
+    @placement_group_manager = PlacementGroupManager.new(settings, hetzner_client)
 
     @network = network_manager.find_or_create if settings.networking.private_network.enabled
     @ssh_key = create_ssh_key
-    @instance_builder = InstanceBuilder.new(settings, hetzner_client, mutex, ssh_key, network)
-    @master_instances = instance_builder.initialize_master_instances(masters_locations)
+    static_worker_node_pools = settings.worker_node_pools.reject(&.autoscaling_enabled).reject(&.external?)
+    @placement_groups = placement_group_manager.create(settings.masters_pool.instance_count, static_worker_node_pools)
+    @instance_builder = InstanceBuilder.new(settings, hetzner_client, mutex, ssh_key, network, placement_groups)
 
-    static_worker_node_pools = settings.worker_node_pools.reject(&.autoscaling_enabled)
+    @master_instances = instance_builder.initialize_master_instances(masters_locations)
     @worker_instances = create_worker_instances(static_worker_node_pools)
   end
 
@@ -61,9 +73,17 @@ class Cluster::Create
 
     create_instances_concurrently(worker_instances, kubernetes_workers_installation_queue_channel)
 
-    completed_channel.receive
+    result = completed_channel.receive
+    if result
+      puts "Error during k3s setup: #{result.message}".colorize(:red)
+      exit 1
+    end
 
     warn_if_not_protected
+  end
+
+  private def validate_external_nodes
+    Cluster::ExternalNodeValidator.new(settings).validate
   end
 
   private def create_ssh_key
@@ -87,13 +107,18 @@ class Cluster::Create
     )
 
     spawn do
-      kubernetes_installer.run(
-        masters_installation_queue_channel: kubernetes_masters_installation_queue_channel,
-        workers_installation_queue_channel: kubernetes_workers_installation_queue_channel,
-        completed_channel: completed_channel,
-        master_count: master_instances.size,
-        worker_count: worker_instances.size
-      )
+      begin
+        kubernetes_installer.run(
+          masters_installation_queue_channel: kubernetes_masters_installation_queue_channel,
+          workers_installation_queue_channel: kubernetes_workers_installation_queue_channel,
+          completed_channel: completed_channel,
+          master_count: master_instances.size,
+          worker_count: worker_instances.size
+        )
+        completed_channel.send(nil)
+      rescue ex : Exception
+        completed_channel.send(ex)
+      end
     end
   end
 
@@ -132,10 +157,11 @@ class Cluster::Create
       spawn do
         begin
           created_instance = instance_factory.run
-          semaphore.receive # release the semaphore immediately after instance creation
           handle_created_instance(created_instance, kubernetes_installation_queue_channel, wait_channel, instance_factory, wait)
         rescue e : Exception
           puts "Error creating instance: #{e.message}"
+        ensure
+          semaphore.receive
         end
       end
     end

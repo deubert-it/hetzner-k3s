@@ -1,5 +1,9 @@
 # Troubleshooting
 
+This page covers common issues and their solutions. If you don't find an answer here, check [GitHub Issues](https://github.com/vitobotta/hetzner-k3s/issues) or ask in [GitHub Discussions](https://github.com/vitobotta/hetzner-k3s/discussions).
+
+---
+
 ## Common Issues and Solutions
 
 ### SSH Connection Problems
@@ -54,6 +58,13 @@ This will provide more detailed output, which can help you identify the root of 
 1. **Check Network Connectivity**: Verify nodes can communicate with each other
 2. **Review Firewall Rules**: Ensure necessary ports are open
 3. **Wait and Retry**: If it's a rate limit issue, wait a few minutes and retry
+4. **Check Network Configuration**: See section below for IPv4/IPv6 configuration issues
+
+### IPv4 Disabled with IPv6 Only Configuration
+
+**Symptoms**: Cluster creation hangs after nodes are created. SSH connection times out when trying to connect to a private IP address.
+
+**Note**: The tool currently does not support IPv6-only public network configuration. When you disable IPv4 (`public_network.ipv4: false`) or enable `networking.ssh.use_private_ip: true`, you must run `hetzner-k3s` from a machine that has access to the same private network, either directly or through a VPN. Otherwise, the tool will attempt to use private IP addresses for SSH/API connections and fail.
 
 ### Load Balancer Issues
 

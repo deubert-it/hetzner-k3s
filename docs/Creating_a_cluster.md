@@ -1,20 +1,29 @@
-# Creating a cluster
+# Creating a Cluster
 
-The tool needs a basic configuration file, written in YAML format, to handle tasks like creating, upgrading, or deleting clusters. Below is an example where commented lines indicate optional settings:
+This page covers the full configuration reference for hetzner-k3s. For a quick start, see the [Quick Start in the README](https://github.com/vitobotta/hetzner-k3s#quick-start) or the [Complete Tutorial](Setting_up_a_cluster.md).
+
+---
+
+## Configuration File
+
+hetzner-k3s uses a YAML configuration file. Below is a complete example with all options. Commented lines are optional:
 
 ```yaml
 ---
 hetzner_token: <your token>
 cluster_name: test
 kubeconfig_path: "./kubeconfig"
-k3s_version: v1.30.3+k3s1
+k3s_version: v1.32.0+k3s1
+config_format_version: 1
 
 networking:
   ssh:
     port: 22
     use_agent: false # set to true if your key has a passphrase
+    use_private_ip: false # set to true to connect to nodes via their private IPs
     public_key_path: "~/.ssh/id_ed25519.pub"
     private_key_path: "~/.ssh/id_ed25519"
+    # existing_ssh_key_name: "my-existing-key" # optional: use an existing SSH key in Hetzner instead of creating a new one
   allowed_networks:
     ssh:
       - 0.0.0.0/0
@@ -51,6 +60,8 @@ networking:
     #     port: 60000-60100
     #     destination_ips:
     #       - 203.0.113.0/24
+  # node_port_firewall_enabled: true # optional: set false to disable NodePort firewall rules (TCP/UDP)
+  # node_port_range: "30000-32767" # optional: NodePort range to open on firewalls (TCP/UDP)
   public_network:
     ipv4: true
     ipv6: true
@@ -73,15 +84,7 @@ networking:
   # cluster_cidr: 10.244.0.0/16 # optional: a custom IPv4/IPv6 network CIDR to use for pod IPs
   # service_cidr: 10.43.0.0/16 # optional: a custom IPv4/IPv6 network CIDR to use for service IPs. Warning, if you change this, you should also change cluster_dns!
   # cluster_dns: 10.43.0.10 # optional: IPv4 Cluster IP for coredns service. Needs to be an address from the service_cidr range
-
-
-# manifests:
-#   cloud_controller_manager_manifest_url: "https://github.com/hetznercloud/hcloud-cloud-controller-manager/releases/download/v1.23.0/ccm-networks.yaml"
-#   csi_driver_manifest_url: "https://raw.githubusercontent.com/hetznercloud/csi-driver/v2.12.0/deploy/kubernetes/hcloud-csi.yml"
-#   system_upgrade_controller_deployment_manifest_url: "https://github.com/rancher/system-upgrade-controller/releases/download/v0.14.2/system-upgrade-controller.yaml"
-#   system_upgrade_controller_crd_manifest_url: "https://github.com/rancher/system-upgrade-controller/releases/download/v0.14.2/crd.yaml"
-#   cluster_autoscaler_manifest_url: "https://raw.githubusercontent.com/kubernetes/autoscaler/master/cluster-autoscaler/cloudprovider/hetzner/examples/cluster-autoscaler-run-on-master.yaml"
-#   cluster_autoscaler_container_image_tag: "v1.32.0"
+  # cluster_domain: cluster.local # optional: custom cluster domain
 
 datastore:
   mode: etcd # etcd (default) or external
@@ -101,14 +104,14 @@ datastore:
 #    s3_folder: ""
 #    s3_force_path_style: false
 
-schedule_workloads_on_masters: false
+schedule_workloads_on_masters: false # set to true to allow pods to be scheduled on master nodes (useful for small clusters)
 
 # image: rocky-9 # optional: default is ubuntu-24.04
 # autoscaling_image: 103908130 # optional, defaults to the `image` setting
 # snapshot_os: microos # optional: specified the os type when using a custom snapshot
 
 masters_pool:
-  instance_type: cpx21
+  instance_type: cpx22
   instance_count: 3 # for HA; you can also create a single master cluster for dev and testing (not recommended for production)
   locations: # You can choose a single location for single master clusters or if you prefer to have all masters in the same location. For regional clusters (which are only available in the eu-central network zone), each master needs to be placed in a separate location.
     - fsn1
@@ -117,53 +120,59 @@ masters_pool:
 
 worker_node_pools:
 - name: small-static
-  instance_type: cpx21
+  instance_type: cpx22
   instance_count: 4
   location: hel1
   # image: debian-11
-  # labels:
+  # labels: # Kubernetes labels to apply to nodes in this pool (for node selection in workloads)
   #   - key: purpose
   #     value: blah
-  # taints:
+  # taints: # Kubernetes taints to apply to nodes in this pool (to repel pods unless they tolerate the taint)
   #   - key: something
   #     value: value1:NoSchedule
 - name: medium-autoscaled
-  instance_type: cpx31
+  instance_type: cpx32
   location: fsn1
   autoscaling:
     enabled: true
     min_instances: 0
     max_instances: 3
 
-# cluster_autoscaler:
-#   scan_interval: "10s"                        # How often cluster is reevaluated for scale up or down
-#   scale_down_delay_after_add: "10m"           # How long after scale up that scale down evaluation resumes
-#   scale_down_delay_after_delete: "10s"        # How long after node deletion that scale down evaluation resumes
-#   scale_down_delay_after_failure: "3m"        # How long after scale down failure that scale down evaluation resumes
-#   max_node_provision_time: "15m"              # Maximum time CA waits for node to be provisioned
-
-embedded_registry_mirror:
-  enabled: false # Enables fast p2p distribution of container images between nodes for faster pod startup. Check if your k3s version is compatible before enabling this option. You can find more information at https://docs.k3s.io/installation/registry-mirror
-
 # addons:
 #   csi_driver:
 #     enabled: true   # Hetzner CSI driver (default true). Set to false to skip installation.
+#     manifest_url: "https://raw.githubusercontent.com/hetznercloud/csi-driver/v2.21.2/deploy/kubernetes/hcloud-csi.yml"
 #   traefik:
 #     enabled: false  # built-in Traefik ingress controller. Disabled by default.
 #   servicelb:
 #     enabled: false  # built-in ServiceLB. Disabled by default.
 #   metrics_server:
 #     enabled: false  # Kubernetes metrics-server addon. Disabled by default.
+#   cluster_autoscaler:
+#     enabled: true # Cluster Autoscaler addon (default true). Set to false to omit autoscaling.
+#     manifest_url: "https://raw.githubusercontent.com/kubernetes/autoscaler/master/cluster-autoscaler/cloudprovider/hetzner/examples/cluster-autoscaler-run-on-master.yaml"
+#     # local_manifest_path: "./cluster-autoscaler.yaml" # optional: use a local manifest file instead of fetching from manifest_url
+#     container_image_tag: "v1.35.0"
+#     scan_interval: "10s"                        # How often cluster is reevaluated for scale up or down
+#     scale_down_delay_after_add: "10m"           # How long after scale up that scale down evaluation resumes
+#     scale_down_delay_after_delete: "10s"        # How long after node deletion that scale down evaluation resumes
+#     scale_down_delay_after_failure: "3m"        # How long after scale down failure that scale down evaluation resumes
+#     max_node_provision_time: "15m"              # Maximum time CA waits for node to be provisioned
 #   cloud_controller_manager:
 #     enabled: true   # Hetzner Cloud Controller Manager (default true). Disabling stops automatic LB provisioning for Service objects.
-#   cluster_autoscaler:
-#     enabled: true   # Cluster Autoscaler addon (default true). Set to false to omit autoscaling.
+#     manifest_url: "https://github.com/hetznercloud/hcloud-cloud-controller-manager/releases/download/v1.33.0/ccm-networks.yaml"
+#   system_upgrade_controller:
+#     enabled: true   # System Upgrade Controller (default true). Set to false to omit autoscaling.
+#     deployment_manifest_url: "https://github.com/rancher/system-upgrade-controller/releases/download/v0.19.2/system-upgrade-controller.yaml"
+#     crd_manifest_url: "https://github.com/rancher/system-upgrade-controller/releases/download/v0.19.2/crd.yaml"
+#   embedded_registry_mirror:
+#     enabled: false # Enables fast p2p distribution of container images between nodes for faster pod startup. Check if your k3s version is compatible before enabling this option. You can find more information at https://docs.k3s.io/installation/registry-mirror
 
-protect_against_deletion: true
+protect_against_deletion: true # prevents accidental deletion of the cluster with the "hetzner-k3s delete" command
 
-create_load_balancer_for_the_kubernetes_api: false # Just a heads up: right now, we can’t limit access to the load balancer by IP through the firewall. This feature hasn’t been added by Hetzner yet.
+create_load_balancer_for_the_kubernetes_api: false # creates a load balancer for HA API access; note: Hetzner firewalls can't yet restrict access to load balancers by IP
 
-k3s_upgrade_concurrency: 1 # how many nodes to upgrade at the same time
+k3s_upgrade_concurrency: 1 # how many nodes to upgrade at the same time; increase for faster upgrades in large clusters, but higher values may impact availability
 
 # additional_packages:
 # - somepackage
@@ -201,16 +210,31 @@ Most settings are straightforward and easy to understand. To see a list of avail
 
 If you prefer not to include the Hetzner token directly in the config file—perhaps for use with CI or to safely commit the config to a repository—you can use the `HCLOUD_TOKEN` environment variable instead. This variable takes precedence over the config file.
 
-When setting `masters_pool`.`instance_count`, keep in mind that if you set it to 1, the tool will create a control plane that is not highly available. For production clusters, it’s better to set this to a number greater than 1. To avoid split brain issues with etcd, this number should be odd, and 3 is the recommended value. Additionally, for production environments, it’s a good idea to configure masters in different locations using the `masters_pool`.`locations` setting.
+When setting `masters_pool`.`instance_count`, keep in mind that if you set it to 1, the tool will create a control plane that is not highly available. For production clusters, it's better to set this to a number greater than 1. To avoid split brain issues with etcd, this number should be odd, and 3 is the recommended value. Additionally, for production environments, it's a good idea to configure masters in different locations using the `masters_pool`.`locations` setting.
 
-You can define any number of worker node pools, either static or autoscaled, and create pools with nodes of different specifications to handle various workloads.
+The `datastore` section configures how Kubernetes stores its cluster state. The default mode is `etcd`, which runs an embedded etcd cluster on your master nodes—this is the recommended option for most deployments. For very large clusters or special requirements, you can use `external` mode with an external datastore (etcd, PostgreSQL, or MySQL) by specifying the connection string in `external_datastore_endpoint`. The etcd mode also supports optional S3 backup configuration for disaster recovery.
 
-Hetzner Cloud init settings, such as `additional_packages`, `additional_pre_k3s_commands`, and `additional_post_k3s_commands`, can be specified at the root level of the configuration file or for each individual pool if different settings are needed. If these settings are configured at the pool level, they will override any settings defined at the root level.
+You can define any number of worker node pools, either static or autoscaled, and create pools with nodes of different specifications to handle various workloads. Each pool can have optional `labels` and `taints`. Labels are key-value pairs that help you target specific nodes when scheduling workloads using node selectors or affinity rules. Taints prevent pods from being scheduled on certain nodes unless the pods explicitly tolerate the taint—useful for dedicating nodes to specific workloads or keeping certain nodes free for particular purposes.
+
+Settings, such as `additional_packages`, `additional_pre_k3s_commands`, and `additional_post_k3s_commands`, can be specified at the root level of the configuration file or for each individual pool if different settings are needed. If these settings are configured at the pool level, they will override any settings defined at the root level.
 
 - `additional_pre_k3s_commands`: Commands executed before k3s installation
 - `additional_post_k3s_commands`: Commands executed after k3s is installed and configured
 
 For an example of using `additional_post_k3s_commands` to resize the root partition for use with storage solutions like Rook Ceph, see [Resizing root partition with additional post k3s commands](./Resizing_root_partition_with_post_create_commands.md).
+
+The `addons` section controls which components hetzner-k3s installs automatically:
+
+- **csi_driver**: The Hetzner CSI driver enables persistent volumes backed by Hetzner block storage. Enabled by default; disable if you're using alternative storage solutions like Rook Ceph or Longhorn.
+- **cloud_controller_manager**: Integrates with Hetzner Cloud to provision load balancers automatically when you create Kubernetes Service objects of type LoadBalancer. Enabled by default.
+- **system_upgrade_controller**: Enables zero-downtime rolling upgrades of k3s across your cluster. Enabled by default.
+- **cluster_autoscaler**: Automatically scales worker node pools based on resource demands. Enabled by default when you have autoscaling pools defined.
+- **traefik**: k3s's built-in ingress controller. Disabled by default; enable if you want a quick ingress solution without installing your own.
+- **servicelb**: k3s's built-in load balancer for bare-metal environments. Disabled by default; typically not needed when using Hetzner's load balancers.
+- **metrics_server**: Enables `kubectl top` commands for viewing resource usage. Disabled by default.
+- **embedded_registry_mirror**: Enables peer-to-peer distribution of container images between nodes for faster pod startup. Disabled by default; check k3s version compatibility before enabling.
+
+The `api_server_hostname` setting is useful when you enable `create_load_balancer_for_the_kubernetes_api`. After the cluster is created, you can point this DNS name to the API load balancer's address, giving you a stable hostname for accessing the Kubernetes API.
 
 Currently, Hetzner Cloud offers six locations: two in Germany (`nbg1` in Nuremberg and `fsn1` in Falkenstein), one in Finland (`hel1` in Helsinki), two in the USA (`ash` in Ashburn, Virginia and `hil` in Hillsboro, Oregon), and one in Singapore (`sin`). Be aware that not all instance types are available in every location, so it’s a good idea to check the Hetzner site and their status page for details.
 
@@ -225,6 +249,8 @@ To create the cluster run:
 ```bash
 hetzner-k3s create --config cluster_config.yaml | tee create.log
 ```
+
+If you need to bypass the validation that your current IP is included in the allowed SSH/API networks, add `--skip-current-ip-validation`.
 
 This process will take a few minutes, depending on how many master and worker nodes you have.
 
@@ -284,7 +310,7 @@ The cluster autoscaler automatically manages the number of worker nodes in your 
 ```yaml
 worker_node_pools:
 - name: autoscaled-pool
-  instance_type: cpx31
+  instance_type: cpx32
   location: fsn1
   autoscaling:
     enabled: true
@@ -306,7 +332,7 @@ cluster_autoscaler:
 
 worker_node_pools:
 - name: autoscaled-pool
-  instance_type: cpx31
+  instance_type: cpx32
   location: fsn1
   autoscaling:
     enabled: true
@@ -335,6 +361,158 @@ These settings apply globally to all autoscaling worker node pools in your clust
 
 ---
 
+### External Node Pools
+
+External node pools let you attach worker nodes from **any provider** (not just Hetzner Cloud) to your cluster. You provision and own these nodes; hetzner-k3s performs the same setup steps that cloud-init would on a Hetzner node (firewall, packages, k3s install) but via SSH instead.
+
+#### Configuration
+
+An external node pool uses `instance_type: external` and defines its nodes in the `external` section:
+
+```yaml
+worker_node_pools:
+- name: external-workers
+  instance_type: external
+  instance_count: 2
+  external:
+    provider: generic
+    nodes:
+      - host: 203.0.113.10
+        ssh_user: root
+        ssh_port: 22
+        ssh_private_key_path: ~/.ssh/external_node_key
+        manage_hostname: true
+        index: 1
+      - host: 198.51.100.20
+        ssh_user: ubuntu
+        ssh_port: 2222
+        ssh_private_key_path: ~/.ssh/external_node_key
+        manage_hostname: true
+        index: 2
+```
+
+For Hetzner Robot dedicated servers, use `provider: robot` at the pool level:
+
+```yaml
+worker_node_pools:
+- name: robot-workers
+  instance_type: external
+  instance_count: 2
+  external:
+    provider: robot
+    robot_user: your-robot-webservice-user
+    robot_password: your-robot-webservice-password
+    nodes:
+      - host: 203.0.113.30
+        robot_server_number: 123456
+        ssh_user: root
+        ssh_private_key_path: ~/.ssh/robot_node_key
+        manage_hostname: true
+        index: 1
+      - host: 203.0.113.31
+        robot_server_number: 123457
+        ssh_user: root
+        ssh_private_key_path: ~/.ssh/robot_node_key
+        manage_hostname: true
+        index: 2
+```
+
+If `robot_user` and `robot_password` are omitted, hetzner-k3s reads them from `ROBOT_USER` and `ROBOT_PASSWORD`.
+
+Robot credentials are Robot Webservice credentials, created in the Robot UI under **Settings** -> **Web service and app settings**.
+
+#### External provider modes
+
+| Provider | Description |
+|---|---|
+| `generic` | Default. Use for external nodes from any provider, including Robot servers that should behave as unmanaged external workers. hetzner-k3s does not ask the Hetzner Cloud Controller Manager to initialize these nodes. |
+| `robot` | Use for Hetzner Robot dedicated servers that should be known to the Hetzner Cloud Controller Manager as Robot nodes. Requires Robot Webservice credentials and `robot_server_number` for every node. |
+
+#### Node properties
+
+| Property | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `host` | String | yes | — | IP address of the external node (must be a valid IPv4 address, not a DNS hostname) |
+| `ssh_user` | String | yes | — | SSH username for the node (e.g. `root`, `ubuntu`) |
+| `ssh_port` | Int32 | no | `22` | SSH port |
+| `ssh_private_key_path` | String | yes | — | Path to the SSH private key (supports `~/` expansion) |
+| `manage_hostname` | Bool | no | `true` | If true, hetzner-k3s sets the node's hostname to match its naming convention |
+| `index` | Int32 | yes | — | 1-based slot index; ties a node config to a specific hostname slot |
+| `robot_server_number` | Int32 | yes for `provider: robot` | — | Robot server number used for the `hrobot://` provider ID and Robot API lookups |
+
+#### The `index` field
+
+The `index` property ties a node config entry to a specific hostname slot. When `manage_hostname: true`, the hostname is derived from the index (not the array position), so reordering the `nodes` array does not change hostnames. Indices must be:
+
+- **Unique** within a pool (no duplicates)
+- **In the range `1..instance_count`**
+
+For example, if `instance_count: 3`, valid indices are `1`, `2`, `3`. The `instance_count` must equal the number of nodes in `external.nodes`.
+
+#### Requirements
+
+External nodes must:
+
+- Run a **Debian-based OS** (Debian or Ubuntu). Package installation uses `apt-get`. No other package managers (dnf, zypper, pacman) are supported.
+- Be accessible via SSH from the machine running hetzner-k3s, using the specified private key and user.
+- Have **root access** — either the SSH user is `root`, or the user has **passwordless sudo**.
+
+#### Required cluster settings
+
+External node pools require the following cluster-wide settings:
+
+- `networking.private_network.enabled: false` — external nodes cannot join a Hetzner private network.
+- `networking.public_network.use_local_firewall: true` — the local firewall is deployed to each external node via SSH.
+- `networking.public_network.hetzner_ips_query_server_url` must be set (required by the local firewall to fetch Hetzner node IPs).
+
+#### Validation rules
+
+The following rules are enforced at config validation time:
+
+1. Private network must be disabled.
+2. Local firewall must be enabled.
+3. No Hetzner-specific fields allowed in the pool (`image`, `autoscaling`, `grow_root_partition_automatically`, `legacy_instance_type`).
+4. Masters pool cannot use `instance_type: external`.
+5. `instance_count` must equal the number of nodes in `external.nodes`.
+6. Node indices must be unique and in range `1..instance_count`.
+7. Node hosts must be unique within a pool.
+8. Robot pools must define Robot credentials and `robot_server_number` for every node.
+9. Robot server numbers must be unique across Robot external pools.
+
+At runtime, before cluster creation begins, hetzner-k3s also validates:
+
+- **SSH accessibility** — can it connect to each node?
+- **Root/sudo access** — does the SSH user have root or passwordless sudo?
+- **Hostname conflicts** — if `manage_hostname: false`, does the existing hostname conflict with any hostname hetzner-k3s will generate?
+- **Robot metadata** — for `provider: robot`, `host` must match the Robot server IP returned for `robot_server_number`. If `manage_hostname: false`, the Robot server name must be a valid Kubernetes node name and must match the node's OS hostname.
+
+#### Setup behavior
+
+When you run `hetzner-k3s create`, for each external node hetzner-k3s will:
+
+1. Set the hostname (if `manage_hostname: true`).
+2. Install packages (`fail2ban`, `wireguard`, plus any `additional_packages`).
+3. Configure the DNS resolver.
+4. Deploy the local firewall (rendered with the node's own SSH port).
+5. Run pre-k3s commands (`additional_pre_k3s_commands`).
+6. Install k3s worker and join it to the cluster.
+7. Run post-k3s commands (`additional_post_k3s_commands`).
+
+With `provider: generic`, external workers are not initialized by the Hetzner Cloud Controller Manager. hetzner-k3s installs them without kubelet's `cloud-provider=external` argument, and assigns a synthetic `external://<public-ip>` provider ID so the cloud node lifecycle controller will not delete them when they are temporarily NotReady.
+
+With `provider: robot`, hetzner-k3s installs workers with kubelet's `cloud-provider=external` argument and assigns `hrobot://<server-number>` provider IDs. It also enables Robot support in the Hetzner Cloud Controller Manager manifest and adds the Robot credentials to the `hcloud` secret. If `manage_hostname: true`, hetzner-k3s updates the Robot server name through the Robot Webservice API before setting the OS hostname. If `manage_hostname: false`, the existing Robot server name and OS hostname must already match.
+
+Robot nodes can be used as Hetzner Load Balancer IP targets through the Hetzner Cloud Controller Manager. Public-IP targets work with Robot API credentials. Private-IP targets require a Robot vSwitch/InternalIP setup and service annotation `load-balancer.hetzner.cloud/use-private-ip: "true"`.
+
+External nodes are labeled with `hetzner-k3s.io/external=true` and `hetzner-k3s.io/external-provider=<provider>`. The Hetzner CSI node driver is configured not to run on external nodes, because Hetzner Cloud Volumes can be attached only to Hetzner Cloud servers. When external pools are present, hetzner-k3s also sets the CSI controller's default volume location to the first master location so the controller does not depend on the Hetzner metadata service. Keep workloads that use the `hcloud-volumes` StorageClass on Hetzner Cloud nodes, or use a storage backend that supports your external nodes.
+
+The `hetzner-k3s delete` command will clean up external nodes by uninstalling k3s, removing firewall files, and resetting iptables/ip6tables policies to accept traffic again via SSH.
+
+#### `hetzner-k3s run` support
+
+The `run` command detects external nodes by matching their IP against the `external.nodes[].host` entries. If a match is found, it uses the node's per-node SSH settings (key, user, port) instead of the cluster-wide SSH settings. This allows you to run commands and scripts on external nodes just like on Hetzner nodes.
+
+---
 ### Idempotency
 
 The `create` command can be run multiple times with the same configuration without causing issues, as the process is idempotent. If the process gets stuck or encounters errors (e.g., due to Hetzner API unavailability or timeouts), you can stop the command and rerun it with the same configuration to continue where it left off. Note that the kubeconfig will be overwritten each time you rerun the command.
@@ -344,13 +522,13 @@ The `create` command can be run multiple times with the same configuration witho
 ### Limitations:
 
 - Using a snapshot instead of a default image will take longer to create instances compared to regular images.
-- The `networking`.`allowed_networks`.`api` setting specifies which networks can access the Kubernetes API, but this currently only works with single-master clusters. Multi-master HA clusters can optionally use a load balancer for the API, but Hetzner’s firewalls do not yet support load balancers.
+- The `networking`.`allowed_networks`.`api` setting specifies which networks can access the Kubernetes API. This works with both single-master and multi-master clusters, but only when `create_load_balancer_for_the_kubernetes_api` is disabled. If the API load balancer is enabled, Hetzner's firewalls do not yet support load balancers, so the API would be exposed to the public internet regardless of the allowed networks configuration.
 - If you enable autoscaling for a nodepool, avoid changing this setting later, as it can cause issues with the autoscaler.
 - Autoscaling is only supported with Ubuntu or other default images, not snapshots.
+- If you already have SSH keys in your Hetzner project, it's best to use a different key for your cluster—unless there's already a key with the same name and fingerprint as the one in your config file.  Hetzner doesn't allow two keys with the same fingerprint in one project. So if you've already added the key from your config but under a different name, Hetzner won't let you add it again. In that case, hetzner-k3s will skip creating the key and won't inject any SSH key into the cluster nodes.  Without an SSH key, Hetzner sets up the nodes with password login instead. That means you'll get an email for each node with its root password. Managing several nodes this way can get tricky. To avoid this, you can either use a new keypair for your cluster, or set `existing_ssh_key_name` in the SSH config to reference the existing key by name. When using `existing_ssh_key_name`, hetzner-k3s will use the specified key instead of creating a new one, and it won't delete the key when you delete the cluster.
 - SSH keys with passphrases can only be used if you set `networking`.`ssh`.`use_ssh_agent` to `true` and use an SSH agent to access your key. For example, on macOS, you can start an agent like this:
 
 ```bash
 eval "$(ssh-agent -s)"
 ssh-add --apple-use-keychain ~/.ssh/<private key>
 ```
-

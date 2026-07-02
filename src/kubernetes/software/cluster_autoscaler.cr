@@ -20,25 +20,29 @@ class Kubernetes::Software::ClusterAutoscaler
   DEFAULT_CA_CERTIFICATES = "/etc/ssl/certs/ca-certificates.crt"
   FALLBACK_CA_BUNDLE      = "/etc/ssl/certs/ca-bundle.crt"
 
-  CLOUD_PROVIDER                      = "hetzner"
-  CRITICAL_ADDONS_ONLY_TOLERATION_KEY = "CriticalAddonsOnly"
-  STORAGE_API_GROUP                   = "storage.k8s.io"
-  VOLUME_ATTACHMENTS_RESOURCE         = "volumeattachments"
-  HCLOUD_CLOUD_INIT_VAR               = "HCLOUD_CLOUD_INIT"
-  HCLOUD_CLUSTER_CONFIG_VAR           = "HCLOUD_CLUSTER_CONFIG"
-  HCLOUD_FIREWALL_VAR                 = "HCLOUD_FIREWALL"
-  HCLOUD_SSH_KEY_VAR                  = "HCLOUD_SSH_KEY"
-  HCLOUD_NETWORK_VAR                  = "HCLOUD_NETWORK"
-  HCLOUD_PUBLIC_IPV4_VAR              = "HCLOUD_PUBLIC_IPV4"
-  HCLOUD_PUBLIC_IPV6_VAR              = "HCLOUD_PUBLIC_IPV6"
-  CERT_CHECK_COMMAND                  = "[ -f /etc/ssl/certs/ca-certificates.crt ] && echo 1 || echo 2"
+  CLOUD_PROVIDER                 = "hetzner"
+  STORAGE_API_GROUP              = "storage.k8s.io"
+  VOLUME_ATTACHMENTS_RESOURCE    = "volumeattachments"
+  HCLOUD_CLOUD_INIT_VAR          = "HCLOUD_CLOUD_INIT"
+  HCLOUD_CLUSTER_CONFIG_VAR      = "HCLOUD_CLUSTER_CONFIG"
+  HCLOUD_CLUSTER_CONFIG_FILE_VAR = "HCLOUD_CLUSTER_CONFIG_FILE"
+  HCLOUD_FIREWALL_VAR            = "HCLOUD_FIREWALL"
+  HCLOUD_SSH_KEY_VAR             = "HCLOUD_SSH_KEY"
+  HCLOUD_NETWORK_VAR             = "HCLOUD_NETWORK"
+  HCLOUD_PUBLIC_IPV4_VAR         = "HCLOUD_PUBLIC_IPV4"
+  HCLOUD_PUBLIC_IPV6_VAR         = "HCLOUD_PUBLIC_IPV6"
+  CERT_CHECK_COMMAND             = "[ -f /etc/ssl/certs/ca-certificates.crt ] && echo 1 || echo 2"
+  CLUSTER_CONFIG_CONFIGMAP_NAME  = "cluster-autoscaler-config"
+  CLUSTER_CONFIG_VOLUME_NAME     = "cluster-config"
+  CLUSTER_CONFIG_MOUNT_PATH      = "/etc/cluster-autoscaler"
+  CLUSTER_CONFIG_FILE_NAME       = "config.json"
 
-  getter configuration : Configuration::Loader
-  getter settings : Configuration::Main { configuration.settings }
-  getter autoscaling_worker_node_pools : Array(Configuration::Models::WorkerNodePool)
-  getter first_master : ::Hetzner::Instance
-  getter ssh : ::Util::SSH
-  getter masters : Array(::Hetzner::Instance)
+  private getter configuration : Configuration::Loader
+  private getter settings : Configuration::Main { configuration.settings }
+  private getter autoscaling_worker_node_pools : Array(Configuration::Models::WorkerNodePool)
+  private getter first_master : ::Hetzner::Instance
+  private getter ssh : ::Util::SSH
+  private getter masters : Array(::Hetzner::Instance)
 
   def initialize(
     @configuration : Configuration::Loader,
@@ -53,7 +57,8 @@ class Kubernetes::Software::ClusterAutoscaler
   def install : Nil
     log_line "Installing Cluster Autoscaler...", log_prefix: default_log_prefix
 
-    apply_manifest_from_yaml(manifest, "Failed to install Cluster Autoscaler")
+    apply_manifest_server_side(configmap_manifest, "Failed to create Cluster Autoscaler ConfigMap")
+    apply_manifest_server_side(manifest, "Failed to install Cluster Autoscaler")
 
     log_line "...Cluster Autoscaler installed", log_prefix: default_log_prefix
   end
@@ -63,6 +68,7 @@ class Kubernetes::Software::ClusterAutoscaler
       configuration,
       settings
     ).generate_script(masters, first_master, pool)
+    grow_root_partition_automatically = pool.effective_grow_root_partition_automatically(settings.grow_root_partition_automatically)
 
     ::Hetzner::Instance::Create.cloud_init(
       settings,
@@ -71,7 +77,8 @@ class Kubernetes::Software::ClusterAutoscaler
       settings.additional_packages,
       settings.additional_pre_k3s_commands,
       settings.additional_post_k3s_commands,
-      [worker_install_script]
+      [worker_install_script],
+      grow_root_partition_automatically
     )
   end
 
@@ -105,7 +112,7 @@ class Kubernetes::Software::ClusterAutoscaler
   end
 
   private def autoscaler_config_args : Array(String)
-    config = settings.cluster_autoscaler
+    config = settings.addons.cluster_autoscaler
     [
       "--scan-interval=#{config.scan_interval}",
       "--scale-down-delay-after-add=#{config.scale_down_delay_after_add}",
@@ -165,8 +172,7 @@ class Kubernetes::Software::ClusterAutoscaler
   end
 
   private def patch_deployment_tolerations(deployment : Kubernetes::Resources::Deployment) : Void
-    pod_spec = deployment.spec.template.spec
-    pod_spec.add_toleration(key: CRITICAL_ADDONS_ONLY_TOLERATION_KEY, value: "true", effect: "NoExecute")
+    deployment.spec.template.spec.add_critical_addons_only_toleration
   end
 
   private def container_command : Array(String)
@@ -247,7 +253,7 @@ class Kubernetes::Software::ClusterAutoscaler
   end
 
   private def patch_autoscaler_container(container : Kubernetes::Resources::Pod::Spec::Container) : Void
-    container.image = "registry.k8s.io/autoscaling/cluster-autoscaler:#{settings.manifests.cluster_autoscaler_container_image_tag}"
+    container.image = "registry.k8s.io/autoscaling/cluster-autoscaler:#{settings.addons.cluster_autoscaler.container_image_tag}"
     container.command = container_command
 
     configure_container_environment(container)
@@ -258,10 +264,11 @@ class Kubernetes::Software::ClusterAutoscaler
     env_vars = container.env || [] of Kubernetes::Resources::Pod::Spec::Container::EnvVariable
 
     remove_env_variable(env_vars, HCLOUD_CLOUD_INIT_VAR)
+    remove_env_variable(env_vars, HCLOUD_CLUSTER_CONFIG_VAR)
 
-    set_env_variable(env_vars, HCLOUD_CLUSTER_CONFIG_VAR, Base64.strict_encode(build_config_json))
+    set_env_variable(env_vars, HCLOUD_CLUSTER_CONFIG_FILE_VAR, "#{CLUSTER_CONFIG_MOUNT_PATH}/#{CLUSTER_CONFIG_FILE_NAME}")
     set_env_variable(env_vars, HCLOUD_FIREWALL_VAR, settings.cluster_name)
-    set_env_variable(env_vars, HCLOUD_SSH_KEY_VAR, settings.cluster_name)
+    set_env_variable(env_vars, HCLOUD_SSH_KEY_VAR, settings.networking.ssh.ssh_key_name(settings.cluster_name))
     set_env_variable(env_vars, HCLOUD_NETWORK_VAR, resolve_network_name)
     set_env_variable(env_vars, HCLOUD_PUBLIC_IPV4_VAR, settings.networking.public_network.ipv4.to_s)
     set_env_variable(env_vars, HCLOUD_PUBLIC_IPV6_VAR, settings.networking.public_network.ipv6.to_s)
@@ -275,12 +282,14 @@ class Kubernetes::Software::ClusterAutoscaler
     ssl_mount = volume_mounts.find { |mount| mount.name == SSL_CERTS_VOLUME_NAME }
     ssl_mount.mountPath = certificate_path if ssl_mount
 
-    container.volumeMounts = volume_mounts
-  end
+    config_mount = Kubernetes::Resources::Pod::Spec::Container::VolumeMount.new(
+      name: CLUSTER_CONFIG_VOLUME_NAME,
+      mountPath: CLUSTER_CONFIG_MOUNT_PATH,
+      readOnly: true
+    )
+    volume_mounts << config_mount
 
-  private def resolve_network_name : String
-    existing_name = settings.networking.private_network.existing_network_name
-    existing_name.blank? ? settings.cluster_name : existing_name
+    container.volumeMounts = volume_mounts
   end
 
   private def remove_env_variable(env_vars : Array(Kubernetes::Resources::Pod::Spec::Container::EnvVariable), name : String) : Void
@@ -309,20 +318,48 @@ class Kubernetes::Software::ClusterAutoscaler
     return unless volumes
 
     ssl_volume = volumes.find { |v| v.name == SSL_CERTS_VOLUME_NAME }
-    return unless ssl_volume
+    if ssl_volume
+      host_path = ssl_volume.hostPath
+      host_path.path = certificate_path if host_path
+    end
 
-    host_path = ssl_volume.hostPath
-    host_path.path = certificate_path if host_path
+    config_volume = Kubernetes::Resources::Pod::Spec::Volume.new(
+      name: CLUSTER_CONFIG_VOLUME_NAME,
+      configMap: Kubernetes::Resources::Pod::Spec::Volume::ConfigMap.new(
+        name: CLUSTER_CONFIG_CONFIGMAP_NAME
+      )
+    )
+    volumes << config_volume
   end
 
   private def manifest : String
-    manifest_url = settings.manifests.cluster_autoscaler_manifest_url
-    raw_manifest = fetch_manifest(manifest_url)
+    autoscaler_config = settings.addons.cluster_autoscaler
+    raw_manifest = if local_path = autoscaler_config.local_manifest_path
+                     log_line "Reading Cluster Autoscaler manifest from local path: #{local_path}", log_prefix: default_log_prefix
+                     File.read(local_path)
+                   else
+                     fetch_manifest(autoscaler_config.manifest_url)
+                   end
 
     resources = YAML.parse_all(raw_manifest)
     patched_resources = patch_resources(resources)
 
     patched_resources.map(&.to_yaml).join("---\n")
+  end
+
+  private def configmap_manifest : String
+    config_json = build_config_json
+    {
+      "apiVersion" => "v1",
+      "kind"       => "ConfigMap",
+      "metadata"   => {
+        "name"      => CLUSTER_CONFIG_CONFIGMAP_NAME,
+        "namespace" => "kube-system",
+      },
+      "data" => {
+        CLUSTER_CONFIG_FILE_NAME => config_json,
+      },
+    }.to_yaml
   end
 
   private def default_log_prefix : String

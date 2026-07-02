@@ -12,6 +12,7 @@ require "./masters_pool"
 require "./worker_node_pools"
 require "./kubectl_presence"
 require "./helm_presence"
+require "./autoscaler_ssh_key"
 
 class Configuration::Validators::CreateSettings
   getter errors : Array(String) = [] of String
@@ -21,6 +22,7 @@ class Configuration::Validators::CreateSettings
   getter masters_pool : Configuration::Models::MasterNodePool
   getter instance_types : Array(Hetzner::InstanceType)
   getter all_locations : Array(Hetzner::Location)
+  getter skip_current_ip_validation : Bool = false
 
   def initialize(
     @errors,
@@ -29,7 +31,8 @@ class Configuration::Validators::CreateSettings
     @hetzner_client,
     @masters_pool,
     @instance_types,
-    @all_locations
+    @all_locations,
+    @skip_current_ip_validation = false
   )
   end
 
@@ -40,7 +43,14 @@ class Configuration::Validators::CreateSettings
 
     Configuration::Validators::Datastore.new(errors, settings.datastore).validate
 
-    Configuration::Validators::Networking.new(errors, settings.networking, settings, hetzner_client, settings.networking.private_network).validate
+    Configuration::Validators::Networking.new(
+      errors,
+      settings.networking,
+      settings,
+      hetzner_client,
+      settings.networking.private_network,
+      skip_current_ip_validation: skip_current_ip_validation
+    ).validate
 
     Configuration::Validators::MastersPool.new(
       errors: errors,
@@ -60,11 +70,14 @@ class Configuration::Validators::CreateSettings
       instance_types: instance_types,
       all_locations: all_locations,
       datastore: settings.datastore,
-      private_network_enabled: settings.networking.private_network.enabled
+      private_network_enabled: settings.networking.private_network.enabled,
+      settings: settings
     ).validate
 
     Configuration::Validators::KubectlPresence.new(errors).validate
 
     Configuration::Validators::HelmPresence.new(errors).validate
+
+    Configuration::Validators::AutoscalerSSHKey.new(errors, settings, hetzner_client).validate
   end
 end
